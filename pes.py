@@ -6,11 +6,15 @@ from selenium.webdriver.common.actions.pointer_input import PointerInput
 from selenium.webdriver.common.actions import interaction
 import time
 import cv2
-import numpy as np
 import os
 from PIL import Image
 import pytesseract
 from skimage.metrics import structural_similarity as ssim
+import json
+from playsound import playsound
+import subprocess, sys
+import numpy as np
+
 
 
 #...........................................
@@ -19,7 +23,7 @@ from skimage.metrics import structural_similarity as ssim
 #Tap
 LANGUAGE_EN_COORDS = (470, 400)  
 OK_COORDS = (2000,990)
-JAPAN_COORDS = (710,880)
+JAPAN_COORDS = (508,294)
 CONFIRM_COORDS = (1500,650)
 MINOR_COORDS = (1300,740)
 TERMS_SELECT_COORDS = (1248,943)
@@ -44,7 +48,9 @@ SPIN_COORDS = (1680, 980)
 SPIN = (1180,640)
 
 #Swipe
-REGION_SWIPE = (1300,860,1300,600)
+REGION_SWIPE = (1300,860,1300,600, 400)
+LANG_SWIPE = (1300,800,1300,710, 1500)
+SPIN_SWIPE = (632,493,102,493, 500)
 SPIN_SELECT_COORDS = (1920,500)
 
 # ..........................................
@@ -89,17 +95,18 @@ def tap_at(driver, x, y):
 
 
 # ..........................................
-# Scrolling Function
+# Scrolling Functions
 def scroll(driver,COORDS):
     print("Scrolled")
-    st_x,st_y,e_x,e_y=COORDS
+    st_x,st_y,e_x,e_y, dur=COORDS
     # swipe from bottom → top (adjust based on your screen)
     driver.swipe(
         start_x=st_x, start_y=st_y,   # bottom center
         end_x=e_x,   end_y=e_y,      # top center
-        duration=400
+        duration=dur
     )
     time.sleep(1)
+
 
 
 # ..........................................
@@ -144,42 +151,154 @@ def is_session_alive(driver):
 
 def crop_player_names(img_path):
     img = cv2.imread(img_path)
-    h, w, _ = img.shape
 
-    # ---- CROP PLAYER 1 NAME (LEFT CARD) ----
-    p1_x1 = int(w * 0.12)
-    p1_y1 = int(h * 0.43)
-    p1_x2 = int(w * 0.35)
-    p1_y2 = int(h * 0.55)
+    # ---- NEW COORDINATES BASED ON REAL IMAGE ----
+    # Move up: y1 = 0.35 h, y2 = 0.47 h
+
+    # Player 1 (Left card)
+    p1_x1 = int(455)
+    p1_y1 = int(20)
+    p1_x2 = int(1150)
+    p1_y2 = int(142)
 
     player1 = img[p1_y1:p1_y2, p1_x1:p1_x2]
     cv2.imwrite("player1_name.png", player1)
 
-    # ---- CROP PLAYER 2 NAME (RIGHT CARD) ----
-    p2_x1 = int(w * 0.38)
-    p2_y1 = int(h * 0.43)
-    p2_x2 = int(w * 0.60)
-    p2_y2 = int(h * 0.55)
+    
 
-    player2 = img[p2_y1:p2_y2, p2_x1:p2_x2]
-    cv2.imwrite("player2_name.png", player2)
+    print("[+] Cropped player name regions (corrected).")
+    return "player1_name.png"
 
-    print("[+] Cropped both player name regions.")
-    return "player1_name.png", "player2_name.png"
+#...........................................
+# For finding region text 
+def crop_region_text(img_path):
+    img = cv2.imread(img_path)
+    if img is None:
+        print("[ERROR] screenshot not found")
+        return None
 
-import pytesseract
-from PIL import Image
+    # Given coordinates
+    x1, y1, x2, y2 = 216, 240, 1117, 330
+
+    crop = img[y1:y2, x1:x2]
+    cv2.imwrite("region_crop.png", crop)
+    return "region_crop.png"
+
+def read_region_name(crop_path):
+    try:
+        if not os.path.exists(crop_path):
+            print(f"[ERROR] Crop file does not exist: {crop_path}")
+            return ""
+
+        # Load with OpenCV for preprocessing
+        img = cv2.imread(crop_path)
+        if img is None:
+            print(f"[ERROR] Failed to read image: {crop_path}")
+            return ""
+
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Upscale to help OCR
+        gray = cv2.resize(
+            gray, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR
+        )
+
+        # Binarize (clean text)
+        _, thresh = cv2.threshold(
+            gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+
+        # Debug: save what OCR actually sees
+        cv2.imwrite("region_ocr_debug.png", thresh)
+
+        # Make sure Tesseract path is correct on Windows (adjust if needed)
+        # import pytesseract
+        # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+        config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
+        text = pytesseract.image_to_string(thresh, config=config)
+
+        cleaned = text.strip().lower()
+        print(f"[DEBUG] OCR raw: {repr(text)}, cleaned: {cleaned}")
+        return cleaned
+
+    except Exception as e:
+        print(f"[ERROR] OCR failed on region text: {e}")
+        return ""
+
+
+
+def find_and_select_region(driver, target_region, scroll_coords, tap_coords):
+    target_region = target_region.lower()
+
+    print(f"[*] Searching for region: {target_region}")
+
+    for i in range(25):  # max 25 scrolls
+        # take screenshot
+        driver.save_screenshot("current_screen_lang.png")
+
+        # crop region
+        crop_path = crop_region_text("current_screen_lang.png")
+        if crop_path is None:
+            print("[ERROR] Could not crop region text.")
+            return False
+
+        # OCR read
+        text = read_region_name(crop_path)
+        print(f"Detected region: {text}")
+
+        # check match
+        if target_region in text:
+            print(f"🎉 Region '{target_region}' FOUND!")
+            tap(driver, tap_coords, msg=f"Select {target_region}")
+            return True
+
+        # if not matched → scroll
+        scroll(driver, scroll_coords)
+
+    print("❌ Region not found after full scroll range.")
+    return False
+#.................................................................
+
 
 def read_player_name(img_path):
-    img = Image.open(img_path)
+    # Load image
+    img = cv2.imread(img_path)
 
+    # 1. Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 2. Upscale 2× for better OCR
+    gray = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+
+    # 3. Reduce noise
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
+
+    # 4. Use adaptive thresholding for white text
+    thresh = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY_INV,
+        31, 10
+    )
+
+    # 5. Morphology to thicken text
+    kernel = np.ones((3, 3), np.uint8)
+    thresh = cv2.dilate(thresh, kernel, iterations=1)
+
+    # DEBUG — Save what Tesseract sees
+    cv2.imwrite("player_ocr_debug.png", thresh)
+
+    # 6. OCR
     config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
-    text = pytesseract.image_to_string(img, config=config)
+    text = pytesseract.image_to_string(thresh, config=config)
 
     cleaned = text.strip().lower()
     return cleaned
 
-import json
+
+
 
 def load_wanted_players(json_path="players_needed.json"):
     try:
@@ -190,32 +309,40 @@ def load_wanted_players(json_path="players_needed.json"):
         print(f"[ERROR] Failed to load wanted players: {e}")
         return []
 
+
+# ..........................................
+# Check for wanted players
 def check_players(driver):
     wanted_names = load_wanted_players()   # <-- reads from JSON
-
-    print("[*] Taking screenshot...")
-    driver.save_screenshot("current_screen.png")
-
-    p1_img, p2_img = crop_player_names("current_screen.png")
-
-    print("[*] Running OCR...")
-    name1 = read_player_name(p1_img)
-    name2 = read_player_name(p2_img)
-
-    print("Detected P1:", name1)
-    print("Detected P2:", name2)
-
-    for w in wanted_names:
-        if w in name1 or w in name2:
-            return True
-
+    tap(driver, (616, 291), msg="Capture Screen for Player Names")
+    time.sleep(5)
+    driver.save_screenshot("player_screen.png")
+    p1_crop = crop_player_names("player_screen.png")
+    p1_name = read_player_name(p1_crop)
+    print(f"[DEBUG] Player 1 detected name: {p1_name}")
+    if p1_name in wanted_names:
+        return True
+    tap(driver, (2133, 96), msg="Closed Player screen")
+    time.sleep(2)
+    
+    tap(driver, (964, 291), msg="Capture Screen for Player Names")
+    time.sleep(5)
+    driver.save_screenshot("player_screen.png")
+    p1_crop = crop_player_names("player_screen.png")
+    p1_name = read_player_name(p1_crop)
+    print(f"[DEBUG] Player 2 detected name: {p1_name}")
+    if p1_name in wanted_names:
+        return True
+    
+    tap(driver, (2133, 96), msg="Closed Player screen")
     return False
+    
 
+    
+    
 def ring_phone_adb():
     print("[+] Ringing phone using ADB...")
-    os.system("adb shell cmd notification post -S bigtext -t 'Player Found!' 'auto.bot.alert' 'Special player detected!'")
-    os.system("adb shell media volume --show --stream 3 --set 15")  # set ring volume to max
-    os.system("adb shell am start -a android.intent.action.RINGTONE")
+    os.system("aadb shell am start -a android.intent.action.VIEW -t audio/* -d content://settings/system/ringtone")
 
 def send_appium_notification(driver):
     driver.execute_script("mobile: broadcast", {
@@ -223,7 +350,7 @@ def send_appium_notification(driver):
         "extras": {"message": "Special Player Found!"}
     })
 
-def is_goal_screen(current_img, goal_template, threshold=0.80):
+def is_goal_screen(current_img, goal_template, threshold=0.70):
     img1 = cv2.imread(current_img, 0)
     img2 = cv2.imread(goal_template, 0)
 
@@ -250,6 +377,75 @@ def wait_for_goal(driver):
     print("GOAL not detected within timeout.")
     return False
 
+
+def alert_player_found():
+    print("[+] Player found! Triggering alerts...")
+
+    # 1. Notification
+    os.system("adb shell cmd notification post -S bigtext -t 'PLAYER FOUND!' 'auto.bot' 'A wanted player is detected!'")
+
+    # 2. Vibrate for 5 seconds
+    os.system("adb shell cmd vibrator vibrate 5000")
+
+    # 3. Play sound
+    # Play alert.mp3 on the PC (tries playsound, then OS fallbacks)
+    try:
+        playsound(os.path.abspath("alert.mp3"))
+    except Exception as e:
+        try:
+            path = os.path.abspath("alert.mp3")
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.run(["afplay", path], check=False)
+            else:
+                # Try common linux players
+                for player in (["paplay"], ["aplay"], ["mpg123"], ["mpv", "--no-video"]):
+                    try:
+                        subprocess.run(player + [path], check=True)
+                        break
+                    except Exception:
+                        continue
+        except Exception as e2:
+            print(f"[ERROR] Unable to play alert.mp3: {e2}")
+            
+def wait_until_home(driver, template_path="home_screen.png", threshold=0.70):
+    print("[*] Trying to reach HOME screen...")
+
+    template = cv2.imread(template_path, 0)
+    if template is None:
+        print("[ERROR] Home template image missing:", template_path)
+        return False
+
+    for i in range(15):  # Press BACK max 15 times
+        # Take screenshot
+        driver.save_screenshot("screen_home_check.png")
+
+        screen = cv2.imread("screen_home_check.png", 0)
+        if screen is None:
+            print("[ERROR] Failed to read screenshot.")
+            return False
+
+        # Resize template to match screenshot resolution
+        tpl_resized = cv2.resize(template, (screen.shape[1], screen.shape[0]))
+
+        # SSIM comparison
+        score, _ = ssim(screen, tpl_resized, full=True)
+
+        print(f"[DEBUG] HOME SSIM Score: {score}")
+
+        if score >= threshold:
+            print("🏠 HOME SCREEN DETECTED!")
+            return True
+
+        print("❌ Not home yet → pressing BACK")
+        driver.back()
+        time.sleep(2)
+
+    print("⚠ Could not reach home within limit.")
+    return False
+
+
 # ..........................................
 # Main Function
 def main():
@@ -272,10 +468,9 @@ def main():
             tap(driver=driver, COORDS=OK_COORDS, msg="Ok")
             time.sleep(20)
             
-            #Selecting region
-            scroll(driver=driver,COORDS=REGION_SWIPE)
-            tap(driver=driver,COORDS=JAPAN_COORDS, msg="Japan")
-            
+            # Selecting region
+            find_and_select_region(driver, target_region="japan", scroll_coords=LANG_SWIPE, tap_coords=JAPAN_COORDS)
+            time.sleep(2)
             #Clicking Ok
             tap(driver=driver, COORDS=OK_COORDS,msg="Ok")
             time.sleep(3)
@@ -304,7 +499,7 @@ def main():
             tap(driver=driver,COORDS=OPTION_ACCEPT, msg="Username Selected")
             time.sleep(20)
             tap(driver=driver,COORDS=DOWNLOAD_COORDS, msg="Download Started")
-            if(not is_goal_screen):
+            if(not wait_for_goal(driver=driver)):
                 reset_app()
                 print("Terminated App....")     
             # GOAL
@@ -318,17 +513,9 @@ def main():
             time.sleep(2)
             tap(driver=driver,COORDS=ENTER_COORDS, msg="Clikced OK")
             time.sleep(2)
-            tap(driver=driver,COORDS=ENTER_COORDS, msg="Clikced OK")
-            time.sleep(2)
-            tap(driver=driver,COORDS=OPTION_ACCEPT, msg="Clikced OK")
-            time.sleep(2)
-            tap(driver=driver,COORDS=OPTION_ACCEPT, msg="Clikced OK")
-            time.sleep(2)
-            tap(driver=driver,COORDS=ENTER_COORDS, msg="Clikced OK")
-            time.sleep(2)
-            tap(driver=driver,COORDS=ENTER_COORDS, msg="Clikced OK")
-            time.sleep(2)
-            tap(driver=driver,COORDS=ENTER_COORDS, msg="Clikced OK")
+            
+            wait_until_home(driver)
+
             time.sleep(3)
             
             #REWARDS
@@ -346,6 +533,8 @@ def main():
             time.sleep(2)
             tap(driver=driver,COORDS=SPECIAL_PLAYER_COORDS, msg="Clikced Special Player" )
             time.sleep(5)
+            scroll(driver=driver,COORDS=SPIN_SWIPE)
+            time.sleep(2)
             tap(driver=driver,COORDS=SPIN_SELECT_COORDS, msg="Click Spin section")
             time.sleep(2)
             tap(driver=driver,COORDS=SPIN_COORDS, msg = "Clicked Spin")
@@ -358,12 +547,11 @@ def main():
             #Checking if we got the right players
             if(check_players(driver=driver)):
                 print("🎉 Special player found!")
-                ring_phone_adb()
+                alert_player_found()
                 send_appium_notification(driver)
                 break
             else:
                 print("Player Not Found")
-                ring_phone_adb()
                 reset_app()
                 print("Terminated App....")                  
             
