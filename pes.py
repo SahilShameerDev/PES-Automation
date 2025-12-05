@@ -446,7 +446,7 @@ def alert_player_found():
         except Exception as e2:
             print(f"[ERROR] Unable to play alert.mp3: {e2}")
             
-def wait_until_home(driver, template_path="home_screen.jpg", threshold=0.70):
+def wait_until_home(driver, template_path="./targets/home_screen.jpg", threshold=0.70):
     print("[*] Trying to reach HOME screen...")
 
     template = cv2.imread(template_path, 0)
