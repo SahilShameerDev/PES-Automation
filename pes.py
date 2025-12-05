@@ -44,8 +44,11 @@ RBACK = (300,980)
 CONTRACT_COORDS = (1160,890)
 SPECIAL_PLAYER_COORDS = (650,650)
 
-SPIN_COORDS = (1680, 980)
+SPIN_COORDS = (900, 600)
 SPIN = (1180,640)
+
+BACK_CONFIRM = (2300, 995)
+
 
 #Swipe
 REGION_SWIPE = (1300,860,1300,600, 400)
@@ -162,12 +165,13 @@ def crop_player_names(img_path):
     p1_y2 = int(142)
 
     player1 = img[p1_y1:p1_y2, p1_x1:p1_x2]
-    cv2.imwrite("player1_name.png", player1)
+    output_path = os.path.join("images", "player1_name.png")
+    cv2.imwrite(output_path, player1)
 
     
 
     print("[+] Cropped player name regions (corrected).")
-    return "player1_name.png"
+    return output_path
 
 #...........................................
 # For finding region text 
@@ -181,8 +185,9 @@ def crop_region_text(img_path):
     x1, y1, x2, y2 = 216, 240, 1117, 330
 
     crop = img[y1:y2, x1:x2]
-    cv2.imwrite("region_crop.png", crop)
-    return "region_crop.png"
+    output_path = os.path.join("images", "region_crop.png")
+    cv2.imwrite(output_path, crop)
+    return output_path
 
 def read_region_name(crop_path):
     try:
@@ -210,7 +215,8 @@ def read_region_name(crop_path):
         )
 
         # Debug: save what OCR actually sees
-        cv2.imwrite("region_ocr_debug.png", thresh)
+        debug_path = os.path.join("images", "region_ocr_debug.png")
+        cv2.imwrite(debug_path, thresh)
 
         # Make sure Tesseract path is correct on Windows (adjust if needed)
         # import pytesseract
@@ -236,10 +242,11 @@ def find_and_select_region(driver, target_region, scroll_coords, tap_coords):
 
     for i in range(25):  # max 25 scrolls
         # take screenshot
-        driver.save_screenshot("current_screen_lang.png")
+        screenshot_path = os.path.join("images", "current_screen_lang.png")
+        driver.save_screenshot(screenshot_path)
 
         # crop region
-        crop_path = crop_region_text("current_screen_lang.png")
+        crop_path = crop_region_text(screenshot_path)
         if crop_path is None:
             print("[ERROR] Could not crop region text.")
             return False
@@ -288,7 +295,8 @@ def read_player_name(img_path):
     thresh = cv2.dilate(thresh, kernel, iterations=1)
 
     # DEBUG — Save what Tesseract sees
-    cv2.imwrite("player_ocr_debug.png", thresh)
+    debug_path = os.path.join("images", "player_ocr_debug.png")
+    cv2.imwrite(debug_path, thresh)
 
     # 6. OCR
     config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
@@ -304,10 +312,36 @@ def load_wanted_players(json_path="players_needed.json"):
     try:
         with open(json_path, "r") as f:
             data = json.load(f)
-            return [name.lower() for name in data.get("players", [])]
+            return [name.lower().replace(" ", "") for name in data.get("players", [])]
     except Exception as e:
         print(f"[ERROR] Failed to load wanted players: {e}")
         return []
+    
+def load_event_names(json_path="event_config.json"):
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+            events = data.get("events", [])
+            return [e.lower().replace(" ", "") for e in events]
+    except Exception as e:
+        print(f"[ERROR] Failed to load event names: {e}")
+        return []
+    
+def load_region_name(json_path="region_config.json"):
+    try:
+        with open(json_path, "r") as f:
+            data = json.load(f)
+            region = data.get("region", "")
+            return region.lower().replace(" ", "")
+    except Exception as e:
+        print(f"[ERROR] Failed to load event names: {e}")
+        return []
+    
+
+
+def go_back(driver):
+    tap(driver, BACK_CONFIRM, msg="Back from event")
+    time.sleep(2)
 
 
 # ..........................................
@@ -316,8 +350,9 @@ def check_players(driver):
     wanted_names = load_wanted_players()   # <-- reads from JSON
     tap(driver, (616, 291), msg="Capture Screen for Player Names")
     time.sleep(5)
-    driver.save_screenshot("player_screen.png")
-    p1_crop = crop_player_names("player_screen.png")
+    screenshot_path = os.path.join("images", "player_screen.png")
+    driver.save_screenshot(screenshot_path)
+    p1_crop = crop_player_names(screenshot_path)
     p1_name = read_player_name(p1_crop)
     print(f"[DEBUG] Player 1 detected name: {p1_name}")
     if p1_name in wanted_names:
@@ -327,8 +362,9 @@ def check_players(driver):
     
     tap(driver, (964, 291), msg="Capture Screen for Player Names")
     time.sleep(5)
-    driver.save_screenshot("player_screen.png")
-    p1_crop = crop_player_names("player_screen.png")
+    screenshot_path = os.path.join("images", "player_screen.png")
+    driver.save_screenshot(screenshot_path)
+    p1_crop = crop_player_names(screenshot_path)
     p1_name = read_player_name(p1_crop)
     print(f"[DEBUG] Player 2 detected name: {p1_name}")
     if p1_name in wanted_names:
@@ -366,9 +402,10 @@ def wait_for_goal(driver):
     print("[*] Waiting for GOAL screen...")
 
     for i in range(60):  # 60 checks ~ 3-5 min max
-        driver.save_screenshot("current_screen.png")
+        screenshot_path = os.path.join("images", "current_screen.png")
+        driver.save_screenshot(screenshot_path)
 
-        if is_goal_screen("current_screen.png", "./targets/goal_screen.png"):
+        if is_goal_screen(screenshot_path, "./targets/goal_screen.png"):
             print("GOAL detected!")
             return True
 
@@ -409,7 +446,7 @@ def alert_player_found():
         except Exception as e2:
             print(f"[ERROR] Unable to play alert.mp3: {e2}")
             
-def wait_until_home(driver, template_path="home_screen.png", threshold=0.70):
+def wait_until_home(driver, template_path="home_screen.jpg", threshold=0.70):
     print("[*] Trying to reach HOME screen...")
 
     template = cv2.imread(template_path, 0)
@@ -419,9 +456,10 @@ def wait_until_home(driver, template_path="home_screen.png", threshold=0.70):
 
     for i in range(15):  # Press BACK max 15 times
         # Take screenshot
-        driver.save_screenshot("screen_home_check.png")
+        screenshot_path = os.path.join("images", "screen_home_check.png")
+        driver.save_screenshot(screenshot_path)
 
-        screen = cv2.imread("screen_home_check.png", 0)
+        screen = cv2.imread(screenshot_path, 0)
         if screen is None:
             print("[ERROR] Failed to read screenshot.")
             return False
@@ -446,9 +484,78 @@ def wait_until_home(driver, template_path="home_screen.png", threshold=0.70):
     return False
 
 
+def crop_spin_section(img_path):
+    img = cv2.imread(img_path)
+    if img is None:
+        print("[ERROR] Could not read screenshot")
+        return None
+
+    H, W = img.shape[:2]
+
+    # Percentages (based on your device)
+    x1_p, y1_p = 0.1875, 0.5409
+    x2_p, y2_p = 0.6125, 0.6090
+
+    # Convert to pixel values dynamically
+    x1 = int(W * x1_p)
+    y1 = int(H * y1_p)
+    x2 = int(W * x2_p)
+    y2 = int(H * y2_p)
+
+    crop = img[y1:y2, x1:x2]
+    output_path = os.path.join("images", "spin_section_crop.png")
+    cv2.imwrite(output_path, crop)
+    return output_path
+
+
+def read_spin_section(crop_path):
+    img = cv2.imread(crop_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.resize(gray, None, fx=2, fy=2)
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
+
+    _, thresh = cv2.threshold(gray, 0, 255,
+                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz "
+    text = pytesseract.image_to_string(thresh, config=config)
+
+    return text.strip().lower()
+
+
+def find_spin_section(driver, event_text):
+    print(f"[*] Searching for spin section: {event_text}")
+
+    for i in range(10):
+        screenshot_path = os.path.join("images", "spin_full.png")
+        driver.save_screenshot(screenshot_path)
+
+        crop_path = crop_spin_section(screenshot_path)
+        text = read_spin_section(crop_path)
+
+        print(f"[DEBUG] OCR spin text: {text}")
+
+        if event_text in text:
+            print("🎯 Event matched!")
+            return True
+
+        # Horizontal scroll
+        driver.swipe(
+            start_x=400, start_y=600,
+            end_x=50,  end_y=600,
+            duration=600
+        )
+        time.sleep(1)
+
+    return False
+
+
 # ..........................................
 # Main Function
 def main():
+    if not os.path.exists("images"):
+        os.mkdir("images")
+
     while True:
         driver = None
         try:
@@ -469,7 +576,7 @@ def main():
             time.sleep(20)
             
             # Selecting region
-            find_and_select_region(driver, target_region="japan", scroll_coords=LANG_SWIPE, tap_coords=JAPAN_COORDS)
+            find_and_select_region(driver, target_region=load_region_name("region_config.json"), scroll_coords=LANG_SWIPE, tap_coords=JAPAN_COORDS)
             time.sleep(2)
             #Clicking Ok
             tap(driver=driver, COORDS=OK_COORDS,msg="Ok")
@@ -533,27 +640,50 @@ def main():
             time.sleep(2)
             tap(driver=driver,COORDS=SPECIAL_PLAYER_COORDS, msg="Clikced Special Player" )
             time.sleep(5)
-            scroll(driver=driver,COORDS=SPIN_SWIPE)
-            time.sleep(2)
-            tap(driver=driver,COORDS=SPIN_SELECT_COORDS, msg="Click Spin section")
-            time.sleep(2)
-            tap(driver=driver,COORDS=SPIN_COORDS, msg = "Clicked Spin")
-            time.sleep(3)
-            tap(driver=driver,COORDS=SPIN, msg= "Spin Complete" )
-            time.sleep(3)
-            tap(driver=driver,COORDS=SPIN_COORDS)
-            time.sleep(30)
+            event_list = load_event_names()
+            print(f"Loaded events: {event_list}")
+
+            player_found = False
+
+            for event in event_list:
+                print(f"\n===== Checking event: {event} =====")
+
+                # 1. Find event section
+                if not find_spin_section(driver, event):
+                    print("❌ Could not find this event, skipping...")
+                    continue
+
+                # 2. Enter event
+                tap(driver, SPIN_SELECT_COORDS, msg="Enter event")
+                time.sleep(2)
+
+                # 3. Spin
+                tap(driver, SPIN_COORDS, msg="Clicked Spin")
+                time.sleep(3)
+                tap(driver, SPIN, msg="Spin Complete")
+                time.sleep(3)
+                tap(driver, SPIN_COORDS)  # show results
+                time.sleep(30)
+
+                # 4. Check players
+                if check_players(driver):
+                    print("🎉 Special Player Found! Stopping now.")
+                    alert_player_found()
+                    send_appium_notification(driver)
+                    player_found = True
+                    break
+
+                print("No player in this event → going back.")
+                go_back(driver)
+                time.sleep(2)
             
-            #Checking if we got the right players
-            if(check_players(driver=driver)):
-                print("🎉 Special player found!")
-                alert_player_found()
-                send_appium_notification(driver)
-                break
-            else:
-                print("Player Not Found")
+            if not player_found:
+                print("No player found in ANY event. Restarting app.")
                 reset_app()
-                print("Terminated App....")                  
+                print("App Restarted.")
+
+
+                         
             
             
         except Exception as e:
